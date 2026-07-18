@@ -195,10 +195,14 @@ def extract_text():
 def generate():
     data = request.get_json(force=True)
     text = (data.get("text") or "").strip()
-    voice = data.get("voice") or "en-US-AriaNeural"
+    voice = data.get("voice") or "en-US-EmmaNeural"
     rate = int(data.get("rate", 0))
     pitch = int(data.get("pitch", 0))
-    as_archive = bool(data.get("as_archive", False))
+    # mode: "single" (one merged mp3), "zip" (parts zipped together),
+    # or "parts" (each part returned separately, undownloaded as a bundle).
+    mode = data.get("mode", "single")
+    if mode not in ("single", "zip", "parts"):
+        mode = "single"
 
     if not text:
         return jsonify({"error": "No text provided."}), 400
@@ -216,20 +220,34 @@ def generate():
     try:
         chunks = split_text(text)
         part_paths = synthesize_all(chunks, voice, rate, pitch, work_dir)
-
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        if as_archive and len(part_paths) > 1:
+        if mode == "parts" and len(part_paths) > 1:
+            parts_out = []
+            for i, p in enumerate(part_paths):
+                part_name = f"speech_{stamp}_part{i + 1:02d}.mp3"
+                part_final_path = os.path.join(OUTPUT_DIR, part_name)
+                shutil.move(p, part_final_path)
+                parts_out.append({
+                    "filename": part_name,
+                    "download_url": f"/download/{part_name}",
+                    "play_url": f"/play/{part_name}",
+                })
+            return jsonify({"mode": "parts", "parts": parts_out})
+
+        elif mode == "zip" and len(part_paths) > 1:
             archive_name = f"speech_{stamp}.zip"
             archive_path = os.path.join(OUTPUT_DIR, archive_name)
             with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for i, p in enumerate(part_paths):
                     zf.write(p, arcname=f"part_{i + 1:02d}.mp3")
             return jsonify({
+                "mode": "zip",
                 "download_url": f"/download/{archive_name}",
                 "filename": archive_name,
                 "parts": len(part_paths),
             })
+
         else:
             final_name = f"speech_{stamp}.mp3"
             final_path = os.path.join(OUTPUT_DIR, final_name)
@@ -238,7 +256,9 @@ def generate():
             else:
                 concat_mp3s(part_paths, final_path)
             return jsonify({
+                "mode": "single",
                 "download_url": f"/download/{final_name}",
+                "play_url": f"/play/{final_name}",
                 "filename": final_name,
                 "parts": len(part_paths),
             })
@@ -263,6 +283,17 @@ def download(filename):
     if not os.path.isfile(path):
         return "File not found.", 404
     return send_file(path, as_attachment=True, download_name=safe_name)
+
+
+@app.route("/play/<path:filename>")
+def play(filename):
+    """Same as /download but without forcing a download, so it can be used
+    directly as an <audio> element's source for immediate playback."""
+    safe_name = os.path.basename(filename)
+    path = os.path.join(OUTPUT_DIR, safe_name)
+    if not os.path.isfile(path):
+        return "File not found.", 404
+    return send_file(path, as_attachment=False, mimetype="audio/mpeg")
 
 
 if __name__ == "__main__":
