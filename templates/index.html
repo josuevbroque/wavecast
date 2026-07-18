@@ -375,6 +375,11 @@
     display: none;
   }
   .error-box.show { display: block; }
+  .error-box.warning {
+    background: #2a2410;
+    border: 1px solid #6b5a35;
+    color: #e8c98a;
+  }
 
   footer {
     margin-top: 40px;
@@ -520,6 +525,8 @@ const I18N = {
     reading: (name) => `Reading ${name}…`,
     loaded: (name) => `Loaded ${name}`,
     couldNotRead: 'Could not read that file.',
+    partialFailure: (failedCount, total, numbers) =>
+      `Heads up: ${failedCount} of ${total} part(s) failed to synthesize (part${failedCount === 1 ? '' : 's'} ${numbers}) — likely a temporary hiccup reaching the speech service. Everything else below succeeded. Generating again will retry the whole text if you want another attempt at those parts.`,
   },
   pt: {
     htmlLang: 'pt-BR',
@@ -554,6 +561,8 @@ const I18N = {
     reading: (name) => `Lendo ${name}…`,
     loaded: (name) => `Carregado: ${name}`,
     couldNotRead: 'Não foi possível ler esse arquivo.',
+    partialFailure: (failedCount, total, numbers) =>
+      `Atenção: ${failedCount} de ${total} parte(s) falharam ao sintetizar (parte${failedCount === 1 ? '' : 's'} ${numbers}) — provavelmente uma instabilidade temporária no serviço de voz. O restante abaixo funcionou normalmente. Gerar novamente vai refazer o texto todo, se quiser tentar de novo essas partes.`,
   }
 };
 
@@ -684,7 +693,7 @@ splitToggle.addEventListener('change', () => {
 });
 
 function clearOutputs() {
-  errorBox.classList.remove('show');
+  errorBox.classList.remove('show', 'warning');
   result.classList.remove('show');
   partsList.innerHTML = '';
   player.style.display = 'none';
@@ -729,13 +738,13 @@ function renderSingleOrZipResult(data) {
 function renderPartsResult(data) {
   const t = I18N[currentLang];
   partsList.innerHTML = '';
-  data.parts.forEach((part, i) => {
+  data.parts.forEach((part) => {
     const row = document.createElement('div');
     row.className = 'part-row';
 
     const label = document.createElement('span');
     label.className = 'part-label';
-    label.textContent = t.partLabel(i + 1);
+    label.textContent = t.partLabel(part.index);
 
     const actions = document.createElement('div');
     actions.className = 'part-actions';
@@ -764,6 +773,15 @@ function renderPartsResult(data) {
   });
 }
 
+function showPartialFailureWarning(data) {
+  if (!data.failed || data.failed.length === 0) return;
+  const t = I18N[currentLang];
+  const failedNumbers = data.failed.map((f) => f.index).join(', ');
+  errorBox.textContent = t.partialFailure(data.failed.length, data.total_chunks, failedNumbers);
+  errorBox.classList.remove('show', 'error-only');
+  errorBox.classList.add('show', 'warning');
+}
+
 genBtn.addEventListener('click', async () => {
   const t = I18N[currentLang];
   clearOutputs();
@@ -788,6 +806,7 @@ genBtn.addEventListener('click', async () => {
     } else {
       renderSingleOrZipResult(data);
     }
+    showPartialFailureWarning(data);
     statusText.textContent = t.statusDone;
   } catch (err) {
     errorBox.textContent = err.message;
@@ -822,6 +841,7 @@ readBtn.addEventListener('click', async () => {
     player.src = data.play_url;
     player.style.display = 'block';
     await player.play();
+    showPartialFailureWarning(data);
     statusText.textContent = t.statusDone;
   } catch (err) {
     errorBox.textContent = err.message;
