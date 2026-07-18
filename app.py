@@ -112,18 +112,42 @@ async def synthesize_chunk(text, voice, rate, pitch, out_path):
     await communicate.save(out_path)
 
 
+async def synthesize_chunk_with_retry(text, voice, rate, pitch, out_path, attempts=2):
+    """Try synthesizing a single chunk, retrying once on transient failures
+    (e.g. a dropped connection to the speech service) before giving up on
+    just this chunk."""
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            await synthesize_chunk(text, voice, rate, pitch, out_path)
+            return True, None
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt < attempts:
+                await asyncio.sleep(1.5)
+    return False, str(last_error)
+
+
 def synthesize_all(chunks, voice, rate, pitch, work_dir):
-    """Synthesize each chunk to its own mp3 file, return list of paths in order."""
-    paths = []
+    """Synthesize each chunk independently. A failure on one chunk does not
+    stop or discard the others - every chunk gets its own attempt (with a
+    retry), and the full set of per-chunk results (success or failure) is
+    returned so the caller can decide what to do with partial results."""
+    results = []
 
     async def run():
         for i, chunk in enumerate(chunks):
             out_path = os.path.join(work_dir, f"part_{i:03d}.mp3")
-            await synthesize_chunk(chunk, voice, rate, pitch, out_path)
-            paths.append(out_path)
+            ok, error = await synthesize_chunk_with_retry(chunk, voice, rate, pitch, out_path)
+            results.append({
+                "index": i,
+                "path": out_path if ok else None,
+                "ok": ok,
+                "error": error,
+            })
 
     asyncio.run(run())
-    return paths
+    return results
 
 
 def concat_mp3s(paths, out_path):
@@ -219,48 +243,75 @@ def generate():
 
     try:
         chunks = split_text(text)
-        part_paths = synthesize_all(chunks, voice, rate, pitch, work_dir)
+        results = synthesize_all(chunks, voice, rate, pitch, work_dir)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        if mode == "parts" and len(part_paths) > 1:
+        succeeded = [r for r in results if r["ok"]]
+        failed = [r for r in results if not r["ok"]]
+        failed_info = [
+            {"index": r["index"] + 1, "error": r["error"]} for r in failed
+        ]
+
+        if not succeeded:
+            # Every chunk failed - genuinely nothing to return.
+            first_error = failed[0]["error"] if failed else "Unknown error."
+            return jsonify({
+                "error": f"Speech generation failed for all {len(chunks)} part(s). "
+                         f"First error: {first_error}",
+                "failed": failed_info,
+            }), 500
+
+        succeeded_paths = [r["path"] for r in succeeded]
+
+        if mode == "parts" and len(chunks) > 1:
             parts_out = []
-            for i, p in enumerate(part_paths):
-                part_name = f"speech_{stamp}_part{i + 1:02d}.mp3"
+            for r in succeeded:
+                part_name = f"speech_{stamp}_part{r['index'] + 1:02d}.mp3"
                 part_final_path = os.path.join(OUTPUT_DIR, part_name)
-                shutil.move(p, part_final_path)
+                shutil.move(r["path"], part_final_path)
                 parts_out.append({
+                    "index": r["index"] + 1,
                     "filename": part_name,
                     "download_url": f"/download/{part_name}",
                     "play_url": f"/play/{part_name}",
                 })
-            return jsonify({"mode": "parts", "parts": parts_out})
+            return jsonify({
+                "mode": "parts",
+                "parts": parts_out,
+                "failed": failed_info,
+                "total_chunks": len(chunks),
+            })
 
-        elif mode == "zip" and len(part_paths) > 1:
+        elif mode == "zip" and len(chunks) > 1:
             archive_name = f"speech_{stamp}.zip"
             archive_path = os.path.join(OUTPUT_DIR, archive_name)
             with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for i, p in enumerate(part_paths):
-                    zf.write(p, arcname=f"part_{i + 1:02d}.mp3")
+                for r in succeeded:
+                    zf.write(r["path"], arcname=f"part_{r['index'] + 1:02d}.mp3")
             return jsonify({
                 "mode": "zip",
                 "download_url": f"/download/{archive_name}",
                 "filename": archive_name,
-                "parts": len(part_paths),
+                "parts": len(succeeded),
+                "failed": failed_info,
+                "total_chunks": len(chunks),
             })
 
         else:
             final_name = f"speech_{stamp}.mp3"
             final_path = os.path.join(OUTPUT_DIR, final_name)
-            if len(part_paths) == 1:
-                shutil.move(part_paths[0], final_path)
+            if len(succeeded_paths) == 1:
+                shutil.move(succeeded_paths[0], final_path)
             else:
-                concat_mp3s(part_paths, final_path)
+                concat_mp3s(succeeded_paths, final_path)
             return jsonify({
                 "mode": "single",
                 "download_url": f"/download/{final_name}",
                 "play_url": f"/play/{final_name}",
                 "filename": final_name,
-                "parts": len(part_paths),
+                "parts": len(succeeded_paths),
+                "failed": failed_info,
+                "total_chunks": len(chunks),
             })
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"Speech generation failed: {exc}"}), 500
