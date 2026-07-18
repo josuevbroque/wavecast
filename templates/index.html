@@ -707,8 +707,8 @@ function currentSplitMode() {
   return chosen ? chosen.value : 'parts';
 }
 
-async function requestGeneration(mode) {
-  const resp = await fetch('/api/generate', {
+async function startGenerationJob(mode) {
+  const resp = await fetch('/api/generate/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -726,19 +726,32 @@ async function requestGeneration(mode) {
   return data;
 }
 
-function renderSingleOrZipResult(data) {
+async function pollJobStatus(jobId) {
+  const resp = await fetch(`/api/generate/status/${jobId}`);
+  const data = await resp.json();
+  if (!resp.ok) {
+    throw new Error(data.error || I18N[currentLang].errGeneric);
+  }
+  return data;
+}
+
+function renderSingleOrZipResult(finalData, totalParts) {
   const t = I18N[currentLang];
-  downloadLink.href = data.download_url;
-  downloadLink.setAttribute('download', data.filename);
-  resultName.textContent = data.filename;
-  resultMeta.textContent = data.parts > 1 ? t.partsSynthesized(data.parts) : t.readyToPlay;
+  downloadLink.href = finalData.download_url;
+  downloadLink.setAttribute('download', finalData.filename);
+  resultName.textContent = finalData.filename;
+  resultMeta.textContent = totalParts > 1 ? t.partsSynthesized(totalParts) : t.readyToPlay;
   result.classList.add('show');
 }
 
-function renderPartsResult(data) {
+const renderedPartIndices = new Set();
+
+function renderNewParts(parts) {
   const t = I18N[currentLang];
-  partsList.innerHTML = '';
-  data.parts.forEach((part) => {
+  parts.forEach((part) => {
+    if (renderedPartIndices.has(part.index)) return;
+    renderedPartIndices.add(part.index);
+
     const row = document.createElement('div');
     row.className = 'part-row';
 
@@ -773,13 +786,46 @@ function renderPartsResult(data) {
   });
 }
 
-function showPartialFailureWarning(data) {
-  if (!data.failed || data.failed.length === 0) return;
+function showPartialFailureWarning(failed, totalChunks) {
+  if (!failed || failed.length === 0) return;
   const t = I18N[currentLang];
-  const failedNumbers = data.failed.map((f) => f.index).join(', ');
-  errorBox.textContent = t.partialFailure(data.failed.length, data.total_chunks, failedNumbers);
-  errorBox.classList.remove('show', 'error-only');
+  const failedNumbers = failed.map((f) => f.index).join(', ');
+  errorBox.textContent = t.partialFailure(failed.length, totalChunks, failedNumbers);
+  errorBox.classList.remove('show');
   errorBox.classList.add('show', 'warning');
+}
+
+const POLL_INTERVAL_MS = 1500;
+
+// Runs a full generate-and-wait cycle: starts the job, polls until done,
+// showing progress and rendering parts as they arrive. mode is the
+// requested output mode; onDone(finalStatus) runs once the job finishes.
+async function runGenerationFlow(mode, showLiveParts, onDone) {
+  const t = I18N[currentLang];
+  const { job_id, total_chunks } = await startGenerationJob(mode);
+  renderedPartIndices.clear();
+
+  while (true) {
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    const status = await pollJobStatus(job_id);
+
+    if (showLiveParts) {
+      renderNewParts(status.parts);
+    }
+    const doneCount = status.parts.length + status.failed.length;
+    statusText.textContent = total_chunks > 1
+      ? `${t.statusSynth} (${doneCount}/${total_chunks})`
+      : t.statusSynth;
+
+    if (status.status === 'done') {
+      if (status.error) {
+        throw new Error(status.error);
+      }
+      showPartialFailureWarning(status.failed, status.total_chunks);
+      onDone(status);
+      return;
+    }
+  }
 }
 
 genBtn.addEventListener('click', async () => {
@@ -799,14 +845,11 @@ genBtn.addEventListener('click', async () => {
 
   try {
     const mode = currentSplitMode();
-    const data = await requestGeneration(mode);
-
-    if (data.mode === 'parts') {
-      renderPartsResult(data);
-    } else {
-      renderSingleOrZipResult(data);
-    }
-    showPartialFailureWarning(data);
+    await runGenerationFlow(mode, mode === 'parts', (status) => {
+      if (status.mode !== 'parts' && status.final) {
+        renderSingleOrZipResult(status.final, status.parts.length);
+      }
+    });
     statusText.textContent = t.statusDone;
   } catch (err) {
     errorBox.textContent = err.message;
@@ -837,11 +880,13 @@ readBtn.addEventListener('click', async () => {
   try {
     // Read Aloud always produces one continuous track, regardless of the
     // split-into-parts option (that option only applies to downloads).
-    const data = await requestGeneration('single');
-    player.src = data.play_url;
-    player.style.display = 'block';
-    await player.play();
-    showPartialFailureWarning(data);
+    await runGenerationFlow('single', false, async (status) => {
+      if (status.final) {
+        player.src = status.final.play_url;
+        player.style.display = 'block';
+        await player.play();
+      }
+    });
     statusText.textContent = t.statusDone;
   } catch (err) {
     errorBox.textContent = err.message;
