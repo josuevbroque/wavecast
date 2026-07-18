@@ -17,6 +17,8 @@ import os
 import re
 import shutil
 import tempfile
+import threading
+import time
 import uuid
 import zipfile
 from datetime import datetime
@@ -128,28 +130,6 @@ async def synthesize_chunk_with_retry(text, voice, rate, pitch, out_path, attemp
     return False, str(last_error)
 
 
-def synthesize_all(chunks, voice, rate, pitch, work_dir):
-    """Synthesize each chunk independently. A failure on one chunk does not
-    stop or discard the others - every chunk gets its own attempt (with a
-    retry), and the full set of per-chunk results (success or failure) is
-    returned so the caller can decide what to do with partial results."""
-    results = []
-
-    async def run():
-        for i, chunk in enumerate(chunks):
-            out_path = os.path.join(work_dir, f"part_{i:03d}.mp3")
-            ok, error = await synthesize_chunk_with_retry(chunk, voice, rate, pitch, out_path)
-            results.append({
-                "index": i,
-                "path": out_path if ok else None,
-                "ok": ok,
-                "error": error,
-            })
-
-    asyncio.run(run())
-    return results
-
-
 def concat_mp3s(paths, out_path):
     """Concatenate MP3 files by simple byte concatenation.
     This works reliably for playback in virtually all players/browsers
@@ -215,15 +195,120 @@ def extract_text():
     return jsonify({"text": text})
 
 
-@app.route("/api/generate", methods=["POST"])
-def generate():
+
+# In-memory job store. A job represents one "generate" request; it runs in a
+# background thread so the HTTP request that starts it can return instantly,
+# and the page polls /api/generate/status/<job_id> for progress. This avoids
+# ever holding a single HTTP request open for the full duration of a long
+# synthesis job, which is what was hitting the hosting platform's own proxy
+# timeout (a limit separate from anything configurable in this app) and
+# causing it to return an HTML error page instead of JSON.
+JOBS = {}
+JOBS_LOCK = threading.Lock()
+JOB_MAX_AGE_SECONDS = 3600  # stale jobs are dropped from memory after an hour
+
+
+def _prune_old_jobs():
+    cutoff = time.time() - JOB_MAX_AGE_SECONDS
+    stale = [jid for jid, j in JOBS.items() if j.get("created", 0) < cutoff]
+    for jid in stale:
+        JOBS.pop(jid, None)
+
+
+def run_generation_job(job_id, chunks, voice, rate, pitch, mode):
+    work_dir = tempfile.mkdtemp(prefix=f"tts_{job_id}_")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ordered_paths = [None] * len(chunks)
+
+    async def run():
+        for i, chunk in enumerate(chunks):
+            out_path = os.path.join(work_dir, f"part_{i:03d}.mp3")
+            ok, error = await synthesize_chunk_with_retry(chunk, voice, rate, pitch, out_path)
+            if ok:
+                part_name = f"speech_{job_id}_part{i + 1:02d}.mp3"
+                part_final_path = os.path.join(OUTPUT_DIR, part_name)
+                shutil.move(out_path, part_final_path)
+                ordered_paths[i] = part_final_path
+                with JOBS_LOCK:
+                    JOBS[job_id]["parts"].append({
+                        "index": i + 1,
+                        "filename": part_name,
+                        "download_url": f"/download/{part_name}",
+                        "play_url": f"/play/{part_name}",
+                    })
+            else:
+                with JOBS_LOCK:
+                    JOBS[job_id]["failed"].append({"index": i + 1, "error": error})
+
+    try:
+        asyncio.run(run())
+    except Exception as exc:  # noqa: BLE001
+        with JOBS_LOCK:
+            JOBS[job_id]["error"] = f"Speech generation failed: {exc}"
+            JOBS[job_id]["status"] = "done"
+        _cleanup_dir(work_dir)
+        return
+
+    succeeded_paths = [p for p in ordered_paths if p]
+
+    with JOBS_LOCK:
+        if not succeeded_paths:
+            first_error = JOBS[job_id]["failed"][0]["error"] if JOBS[job_id]["failed"] else "Unknown error."
+            JOBS[job_id]["error"] = (
+                f"Speech generation failed for all {len(chunks)} part(s). First error: {first_error}"
+            )
+            JOBS[job_id]["status"] = "done"
+        else:
+            final = None
+            if mode == "zip" and len(chunks) > 1:
+                archive_name = f"speech_{stamp}_{job_id}.zip"
+                archive_path = os.path.join(OUTPUT_DIR, archive_name)
+                with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for idx, p in enumerate(ordered_paths):
+                        if p:
+                            zf.write(p, arcname=f"part_{idx + 1:02d}.mp3")
+                final = {"download_url": f"/download/{archive_name}", "filename": archive_name}
+            elif mode != "parts":
+                if len(succeeded_paths) == 1:
+                    # Only one chunk total: reuse its file directly as the final
+                    # output rather than creating a needless duplicate copy.
+                    only_part = JOBS[job_id]["parts"][0]
+                    final = {
+                        "download_url": only_part["download_url"],
+                        "play_url": only_part["play_url"],
+                        "filename": only_part["filename"],
+                    }
+                else:
+                    final_name = f"speech_{stamp}_{job_id}.mp3"
+                    final_path = os.path.join(OUTPUT_DIR, final_name)
+                    concat_mp3s(succeeded_paths, final_path)
+                    final = {
+                        "download_url": f"/download/{final_name}",
+                        "play_url": f"/play/{final_name}",
+                        "filename": final_name,
+                    }
+            JOBS[job_id]["final"] = final
+            JOBS[job_id]["status"] = "done"
+
+    _cleanup_dir(work_dir)
+
+
+def _cleanup_dir(work_dir):
+    try:
+        for f in os.listdir(work_dir):
+            os.remove(os.path.join(work_dir, f))
+        os.rmdir(work_dir)
+    except OSError:
+        pass
+
+
+@app.route("/api/generate/start", methods=["POST"])
+def generate_start():
     data = request.get_json(force=True)
     text = (data.get("text") or "").strip()
     voice = data.get("voice") or "en-US-EmmaNeural"
     rate = int(data.get("rate", 0))
     pitch = int(data.get("pitch", 0))
-    # mode: "single" (one merged mp3), "zip" (parts zipped together),
-    # or "parts" (each part returned separately, undownloaded as a bundle).
     mode = data.get("mode", "single")
     if mode not in ("single", "zip", "parts"):
         mode = "single"
@@ -238,93 +323,47 @@ def generate():
     rate = max(-50, min(50, rate))
     pitch = max(-50, min(50, pitch))
 
-    job_id = uuid.uuid4().hex[:10]
-    work_dir = tempfile.mkdtemp(prefix=f"tts_{job_id}_")
+    chunks = split_text(text)
+    job_id = uuid.uuid4().hex[:12]
 
-    try:
-        chunks = split_text(text)
-        results = synthesize_all(chunks, voice, rate, pitch, work_dir)
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    with JOBS_LOCK:
+        _prune_old_jobs()
+        JOBS[job_id] = {
+            "status": "running",
+            "mode": mode,
+            "total_chunks": len(chunks),
+            "parts": [],
+            "failed": [],
+            "final": None,
+            "error": None,
+            "created": time.time(),
+        }
 
-        succeeded = [r for r in results if r["ok"]]
-        failed = [r for r in results if not r["ok"]]
-        failed_info = [
-            {"index": r["index"] + 1, "error": r["error"]} for r in failed
-        ]
+    thread = threading.Thread(
+        target=run_generation_job,
+        args=(job_id, chunks, voice, rate, pitch, mode),
+        daemon=True,
+    )
+    thread.start()
 
-        if not succeeded:
-            # Every chunk failed - genuinely nothing to return.
-            first_error = failed[0]["error"] if failed else "Unknown error."
-            return jsonify({
-                "error": f"Speech generation failed for all {len(chunks)} part(s). "
-                         f"First error: {first_error}",
-                "failed": failed_info,
-            }), 500
+    return jsonify({"job_id": job_id, "total_chunks": len(chunks), "mode": mode})
 
-        succeeded_paths = [r["path"] for r in succeeded]
 
-        if mode == "parts" and len(chunks) > 1:
-            parts_out = []
-            for r in succeeded:
-                part_name = f"speech_{stamp}_part{r['index'] + 1:02d}.mp3"
-                part_final_path = os.path.join(OUTPUT_DIR, part_name)
-                shutil.move(r["path"], part_final_path)
-                parts_out.append({
-                    "index": r["index"] + 1,
-                    "filename": part_name,
-                    "download_url": f"/download/{part_name}",
-                    "play_url": f"/play/{part_name}",
-                })
-            return jsonify({
-                "mode": "parts",
-                "parts": parts_out,
-                "failed": failed_info,
-                "total_chunks": len(chunks),
-            })
-
-        elif mode == "zip" and len(chunks) > 1:
-            archive_name = f"speech_{stamp}.zip"
-            archive_path = os.path.join(OUTPUT_DIR, archive_name)
-            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for r in succeeded:
-                    zf.write(r["path"], arcname=f"part_{r['index'] + 1:02d}.mp3")
-            return jsonify({
-                "mode": "zip",
-                "download_url": f"/download/{archive_name}",
-                "filename": archive_name,
-                "parts": len(succeeded),
-                "failed": failed_info,
-                "total_chunks": len(chunks),
-            })
-
-        else:
-            final_name = f"speech_{stamp}.mp3"
-            final_path = os.path.join(OUTPUT_DIR, final_name)
-            if len(succeeded_paths) == 1:
-                shutil.move(succeeded_paths[0], final_path)
-            else:
-                concat_mp3s(succeeded_paths, final_path)
-            return jsonify({
-                "mode": "single",
-                "download_url": f"/download/{final_name}",
-                "play_url": f"/play/{final_name}",
-                "filename": final_name,
-                "parts": len(succeeded_paths),
-                "failed": failed_info,
-                "total_chunks": len(chunks),
-            })
-    except Exception as exc:  # noqa: BLE001
-        return jsonify({"error": f"Speech generation failed: {exc}"}), 500
-    finally:
-        for f in os.listdir(work_dir):
-            try:
-                os.remove(os.path.join(work_dir, f))
-            except OSError:
-                pass
-        try:
-            os.rmdir(work_dir)
-        except OSError:
-            pass
+@app.route("/api/generate/status/<job_id>")
+def generate_status(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return jsonify({"error": "Unknown or expired job."}), 404
+        return jsonify({
+            "status": job["status"],
+            "mode": job["mode"],
+            "total_chunks": job["total_chunks"],
+            "parts": list(job["parts"]),
+            "failed": list(job["failed"]),
+            "final": job["final"],
+            "error": job["error"],
+        })
 
 
 @app.route("/download/<path:filename>")
