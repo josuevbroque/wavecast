@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Wavecast — free AI voice reader</title>
+<title>wavecast</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300..700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
@@ -43,7 +43,7 @@
     justify-content: space-between;
     border-bottom: 1px solid var(--line);
     padding-bottom: 14px;
-    margin-bottom: 6px;
+    margin-bottom: 30px;
   }
 
   .brand {
@@ -55,20 +55,20 @@
   }
   .brand span { color: var(--dial); font-style: italic; font-weight: 400; }
 
-  .freq {
-    font-size: 12px;
+  .lang-toggle {
+    background: transparent;
+    border: 1px solid var(--line);
     color: var(--paper-dim);
-    letter-spacing: 0.08em;
+    padding: 7px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease;
   }
-
-  .subhead {
-    font-size: 13px;
-    color: var(--paper-dim);
-    margin: 10px 0 34px;
-    line-height: 1.6;
-    max-width: 56ch;
-  }
-  .subhead a { color: var(--dial); text-decoration: none; border-bottom: 1px dotted var(--dial-dim); }
+  .lang-toggle:hover { border-color: var(--dial); color: var(--dial); }
 
   .panel {
     background: var(--panel);
@@ -210,6 +210,27 @@
   }
   .archive-toggle input { accent-color: var(--dial); }
 
+  .split-options {
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 14px;
+    margin-left: 26px;
+    padding-left: 14px;
+    border-left: 2px solid var(--line);
+  }
+  .split-options.show { display: flex; }
+
+  .radio-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--paper-dim);
+    cursor: pointer;
+  }
+  .radio-row input { accent-color: var(--dial); }
+
   .action-row {
     display: flex;
     align-items: center;
@@ -237,6 +258,17 @@
     background: var(--dial-dim);
     color: #c9c3b3;
     cursor: not-allowed;
+  }
+  button.generate.secondary {
+    background: transparent;
+    border: 1px solid var(--dial);
+    color: var(--dial);
+  }
+  button.generate.secondary:hover { background: rgba(232, 163, 61, 0.12); }
+  button.generate.secondary:disabled {
+    border-color: var(--dial-dim);
+    color: var(--dial-dim);
+    background: transparent;
   }
 
   .status {
@@ -310,6 +342,28 @@
   }
   a.download-btn:hover { background: var(--dial); color: var(--ink); }
 
+  .parts-list {
+    margin-top: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .part-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 18px;
+    background: var(--ink-2);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    font-size: 12px;
+    color: var(--paper-dim);
+  }
+  .part-row .part-label { color: var(--paper); }
+  .part-row .part-actions { display: flex; gap: 10px; }
+  .part-row .download-btn { padding: 6px 12px; font-size: 11px; }
+
   .error-box {
     margin-top: 18px;
     padding: 14px 18px;
@@ -336,12 +390,8 @@
 
   <div class="band">
     <div class="brand">wave<span>cast</span></div>
-    <div class="freq">FM 98.6 · READ ALOUD</div>
+    <button class="lang-toggle" id="langToggle" type="button">EN / PT-BR</button>
   </div>
-  <p class="subhead">
-    Paste text, pick a voice, get an MP3 back. Runs on the free neural voices
-    behind Microsoft Edge's "Read aloud" feature — no account, no API key, no cost.
-  </p>
 
   <div class="panel">
     <span class="panel-label">Manuscript</span>
@@ -364,7 +414,7 @@
         <label for="voice">Voice</label>
         <select id="voice">
           {% for v in voices %}
-          <option value="{{ v.id }}" {% if v.id == 'en-US-AriaNeural' %}selected{% endif %}>{{ v.label }}</option>
+          <option value="{{ v.id }}">{{ v.label }}</option>
           {% endfor %}
         </select>
       </div>
@@ -384,13 +434,28 @@
       </div>
     </div>
     <label class="archive-toggle">
-      <input type="checkbox" id="archive">
-      For long text split into multiple parts, download a .zip archive instead of one merged MP3
+      <input type="checkbox" id="splitToggle">
+      <span id="splitToggleLabel">For long text, split into separate parts instead of one merged MP3</span>
     </label>
+    <div class="split-options" id="splitOptions">
+      <label class="radio-row">
+        <input type="radio" name="splitMode" value="parts" checked>
+        <span id="splitOptSeparate">Download each part separately</span>
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="splitMode" value="zip">
+        <span id="splitOptZip">Download all parts together (.zip)</span>
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="splitMode" value="single">
+        <span id="splitOptCombine">Combine parts into a single MP3</span>
+      </label>
+    </div>
   </div>
 
   <div class="action-row">
     <button class="generate" id="genBtn">Generate audio</button>
+    <button class="generate secondary" id="readBtn">Read aloud</button>
     <div class="status">
       <div class="wave" id="wave">
         <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
@@ -399,32 +464,111 @@
     </div>
   </div>
 
-  <div class="result" id="result">
-    <div class="result-info">
-      <strong id="resultName"></strong><br>
-      <span id="resultMeta"></span>
+  <audio id="player" controls style="display:none; width:100%; margin-top:16px;"></audio>
+
+  <div id="resultsWrap">
+    <div class="result" id="result">
+      <div class="result-info">
+        <strong id="resultName"></strong><br>
+        <span id="resultMeta"></span>
+      </div>
+      <a href="#" class="download-btn" id="downloadLink" download>Download</a>
     </div>
-    <a href="#" class="download-btn" id="downloadLink" download>Download</a>
+    <div class="parts-list" id="partsList"></div>
   </div>
 
   <div class="error-box" id="errorBox"></div>
 
   <footer>
-    Powered by the open-source <code>edge-tts</code> project, which uses Microsoft's
-    free "Read aloud" text-to-speech service. Unofficial — this may stop working
-    at any time if Microsoft changes that service.
+    <span id="footerText">Powered by the open-source <code>edge-tts</code> project, which uses Microsoft's
+    free "Read aloud" text-to-speech service.</span>
   </footer>
 </div>
 
 <script>
+const I18N = {
+  en: {
+    htmlLang: 'en',
+    langToggle: 'EN / PT-BR',
+    panelManuscript: 'Manuscript',
+    uploadBtn: 'Upload .txt or .docx',
+    textPlaceholder: 'Paste or type the text you want read aloud, or upload a file above…',
+    panelDial: 'Dial settings',
+    voiceLabel: 'Voice',
+    speedLabel: 'Speed',
+    pitchLabel: 'Pitch',
+    splitToggleLabel: 'For long text, split into separate parts instead of one merged MP3',
+    splitOptSeparate: 'Download each part separately',
+    splitOptZip: 'Download all parts together (.zip)',
+    splitOptCombine: 'Combine parts into a single MP3',
+    genBtn: 'Generate audio',
+    readBtn: 'Read aloud',
+    statusSynth: 'Synthesizing…',
+    statusReading: 'Preparing audio…',
+    statusDone: 'Done.',
+    errNoText: 'Paste some text first.',
+    errGeneric: 'Something went wrong.',
+    readyToPlay: 'Ready to play',
+    partsSynthesized: (n) => `${n} parts synthesized`,
+    downloadBtn: 'Download',
+    playBtn: 'Play',
+    partLabel: (i) => `Part ${i}`,
+    footerHtml: 'Powered by the open-source <code>edge-tts</code> project, which uses Microsoft\'s free "Read aloud" text-to-speech service.',
+    defaultVoice: 'en-US-EmmaNeural',
+    charCount: (n) => n.toLocaleString() + ' character' + (n === 1 ? '' : 's'),
+    chunkInfo: (n) => `~${n} audio parts`,
+    reading: (name) => `Reading ${name}…`,
+    loaded: (name) => `Loaded ${name}`,
+    couldNotRead: 'Could not read that file.',
+  },
+  pt: {
+    htmlLang: 'pt-BR',
+    langToggle: 'PT-BR / EN',
+    panelManuscript: 'Manuscrito',
+    uploadBtn: 'Enviar .txt ou .docx',
+    textPlaceholder: 'Cole ou digite o texto que você quer ouvir, ou envie um arquivo acima…',
+    panelDial: 'Configurações',
+    voiceLabel: 'Voz',
+    speedLabel: 'Velocidade',
+    pitchLabel: 'Tom',
+    splitToggleLabel: 'Para textos longos, dividir em partes separadas em vez de um único MP3',
+    splitOptSeparate: 'Baixar cada parte separadamente',
+    splitOptZip: 'Baixar todas as partes juntas (.zip)',
+    splitOptCombine: 'Combinar as partes em um único MP3',
+    genBtn: 'Gerar áudio',
+    readBtn: 'Ler em voz alta',
+    statusSynth: 'Sintetizando…',
+    statusReading: 'Preparando áudio…',
+    statusDone: 'Pronto.',
+    errNoText: 'Cole algum texto primeiro.',
+    errGeneric: 'Algo deu errado.',
+    readyToPlay: 'Pronto para tocar',
+    partsSynthesized: (n) => `${n} partes sintetizadas`,
+    downloadBtn: 'Baixar',
+    playBtn: 'Tocar',
+    partLabel: (i) => `Parte ${i}`,
+    footerHtml: 'Desenvolvido com o projeto open-source <code>edge-tts</code>, que usa o serviço gratuito "Ler em voz alta" da Microsoft.',
+    defaultVoice: 'pt-BR-FranciscaNeural',
+    charCount: (n) => n.toLocaleString() + (n === 1 ? ' caractere' : ' caracteres'),
+    chunkInfo: (n) => `~${n} partes de áudio`,
+    reading: (name) => `Lendo ${name}…`,
+    loaded: (name) => `Carregado: ${name}`,
+    couldNotRead: 'Não foi possível ler esse arquivo.',
+  }
+};
+
+let currentLang = 'en';
+
 const textEl = document.getElementById('text');
 const charcountEl = document.getElementById('charcount');
 const chunkinfoEl = document.getElementById('chunkinfo');
+const voiceEl = document.getElementById('voice');
 const rateEl = document.getElementById('rate');
 const pitchEl = document.getElementById('pitch');
 const rateOut = document.getElementById('rateOut');
 const pitchOut = document.getElementById('pitchOut');
 const genBtn = document.getElementById('genBtn');
+const readBtn = document.getElementById('readBtn');
 const wave = document.getElementById('wave');
 const statusText = document.getElementById('statusText');
 const result = document.getElementById('result');
@@ -432,28 +576,79 @@ const resultName = document.getElementById('resultName');
 const resultMeta = document.getElementById('resultMeta');
 const downloadLink = document.getElementById('downloadLink');
 const errorBox = document.getElementById('errorBox');
-const archiveEl = document.getElementById('archive');
+const splitToggle = document.getElementById('splitToggle');
+const splitOptions = document.getElementById('splitOptions');
+const partsList = document.getElementById('partsList');
+const player = document.getElementById('player');
+const langToggle = document.getElementById('langToggle');
+const fileInput = document.getElementById('fileInput');
+const fileStatus = document.getElementById('fileStatus');
+const uploadLabel = document.querySelector('label[for="fileInput"]');
 
 const CHUNK_SIZE = 3000;
 
 function updateCharCount() {
+  const t = I18N[currentLang];
   const len = textEl.value.length;
-  charcountEl.textContent = len.toLocaleString() + ' character' + (len === 1 ? '' : 's');
+  charcountEl.textContent = t.charCount(len);
   const chunks = Math.max(1, Math.ceil(len / CHUNK_SIZE));
-  chunkinfoEl.textContent = chunks > 1 ? `~${chunks} audio parts` : '';
+  chunkinfoEl.textContent = chunks > 1 ? t.chunkInfo(chunks) : '';
 }
-textEl.addEventListener('input', updateCharCount);
-updateCharCount();
 
-const fileInput = document.getElementById('fileInput');
-const fileStatus = document.getElementById('fileStatus');
+function applyLanguage(lang) {
+  currentLang = lang;
+  const t = I18N[lang];
+  document.documentElement.lang = t.htmlLang;
+  langToggle.textContent = t.langToggle;
+  document.querySelector('.panel-label').textContent = t.panelManuscript;
+  document.querySelectorAll('.panel-label')[1].textContent = t.panelDial;
+  uploadLabel.textContent = t.uploadBtn;
+  textEl.placeholder = t.textPlaceholder;
+  document.querySelector('label[for="voice"]').textContent = t.voiceLabel;
+  document.getElementById('splitToggleLabel').textContent = t.splitToggleLabel;
+  document.getElementById('splitOptSeparate').textContent = t.splitOptSeparate;
+  document.getElementById('splitOptZip').textContent = t.splitOptZip;
+  document.getElementById('splitOptCombine').textContent = t.splitOptCombine;
+  genBtn.textContent = t.genBtn;
+  readBtn.textContent = t.readBtn;
+  downloadLink.textContent = t.downloadBtn;
+  document.getElementById('footerText').innerHTML = t.footerHtml;
+
+  const speedPitchLabels = document.querySelectorAll('.field label');
+  // speedPitchLabels[0] is "Voice" (already set above via selector), so grab by structure instead:
+  const allFieldLabels = document.querySelectorAll('.controls-grid .field label');
+  allFieldLabels[0].textContent = t.voiceLabel;
+  allFieldLabels[1].textContent = t.speedLabel;
+  allFieldLabels[2].textContent = t.pitchLabel;
+
+  // Set this language's default voice, if the current selection belongs to
+  // the *other* language's default (i.e. the user hasn't deliberately picked
+  // something else).
+  const otherDefault = lang === 'en' ? I18N.pt.defaultVoice : I18N.en.defaultVoice;
+  if (voiceEl.value === otherDefault || !voiceEl.value) {
+    voiceEl.value = t.defaultVoice;
+  }
+
+  updateCharCount();
+}
+
+langToggle.addEventListener('click', () => {
+  applyLanguage(currentLang === 'en' ? 'pt' : 'en');
+});
+
+// Set the initial default voice (Emma) on first load.
+voiceEl.value = I18N.en.defaultVoice;
+applyLanguage('en');
+
+textEl.addEventListener('input', updateCharCount);
 
 fileInput.addEventListener('change', async () => {
   const file = fileInput.files[0];
   if (!file) return;
+  const t = I18N[currentLang];
 
   fileStatus.classList.remove('error');
-  fileStatus.textContent = `Reading ${file.name}…`;
+  fileStatus.textContent = t.reading(file.name);
 
   const formData = new FormData();
   formData.append('file', file);
@@ -462,11 +657,11 @@ fileInput.addEventListener('change', async () => {
     const resp = await fetch('/api/extract-text', { method: 'POST', body: formData });
     const data = await resp.json();
     if (!resp.ok) {
-      throw new Error(data.error || 'Could not read that file.');
+      throw new Error(data.error || t.couldNotRead);
     }
     textEl.value = data.text;
     updateCharCount();
-    fileStatus.textContent = `Loaded ${file.name}`;
+    fileStatus.textContent = t.loaded(file.name);
   } catch (err) {
     fileStatus.classList.add('error');
     fileStatus.textContent = err.message;
@@ -484,53 +679,157 @@ pitchEl.addEventListener('input', () => {
   pitchOut.textContent = (v >= 0 ? '+' : '') + v + 'Hz';
 });
 
-genBtn.addEventListener('click', async () => {
-  const text = textEl.value.trim();
+splitToggle.addEventListener('change', () => {
+  splitOptions.classList.toggle('show', splitToggle.checked);
+});
+
+function clearOutputs() {
   errorBox.classList.remove('show');
   result.classList.remove('show');
+  partsList.innerHTML = '';
+  player.style.display = 'none';
+  player.pause();
+  player.removeAttribute('src');
+}
 
-  if (!text) {
-    errorBox.textContent = 'Paste some text first.';
+function currentSplitMode() {
+  if (!splitToggle.checked) return 'single';
+  const chosen = document.querySelector('input[name="splitMode"]:checked');
+  return chosen ? chosen.value : 'parts';
+}
+
+async function requestGeneration(mode) {
+  const resp = await fetch('/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text: textEl.value.trim(),
+      voice: voiceEl.value,
+      rate: parseInt(rateEl.value, 10),
+      pitch: parseInt(pitchEl.value, 10),
+      mode
+    })
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    throw new Error(data.error || I18N[currentLang].errGeneric);
+  }
+  return data;
+}
+
+function renderSingleOrZipResult(data) {
+  const t = I18N[currentLang];
+  downloadLink.href = data.download_url;
+  downloadLink.setAttribute('download', data.filename);
+  resultName.textContent = data.filename;
+  resultMeta.textContent = data.parts > 1 ? t.partsSynthesized(data.parts) : t.readyToPlay;
+  result.classList.add('show');
+}
+
+function renderPartsResult(data) {
+  const t = I18N[currentLang];
+  partsList.innerHTML = '';
+  data.parts.forEach((part, i) => {
+    const row = document.createElement('div');
+    row.className = 'part-row';
+
+    const label = document.createElement('span');
+    label.className = 'part-label';
+    label.textContent = t.partLabel(i + 1);
+
+    const actions = document.createElement('div');
+    actions.className = 'part-actions';
+
+    const playBtn = document.createElement('button');
+    playBtn.className = 'download-btn';
+    playBtn.textContent = t.playBtn;
+    playBtn.type = 'button';
+    playBtn.addEventListener('click', () => {
+      player.src = part.play_url;
+      player.style.display = 'block';
+      player.play();
+    });
+
+    const dl = document.createElement('a');
+    dl.className = 'download-btn';
+    dl.href = part.download_url;
+    dl.textContent = t.downloadBtn;
+    dl.setAttribute('download', part.filename);
+
+    actions.appendChild(playBtn);
+    actions.appendChild(dl);
+    row.appendChild(label);
+    row.appendChild(actions);
+    partsList.appendChild(row);
+  });
+}
+
+genBtn.addEventListener('click', async () => {
+  const t = I18N[currentLang];
+  clearOutputs();
+
+  if (!textEl.value.trim()) {
+    errorBox.textContent = t.errNoText;
     errorBox.classList.add('show');
     return;
   }
 
   genBtn.disabled = true;
+  readBtn.disabled = true;
   wave.classList.add('active');
-  statusText.textContent = 'Synthesizing…';
+  statusText.textContent = t.statusSynth;
 
   try {
-    const resp = await fetch('/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text,
-        voice: document.getElementById('voice').value,
-        rate: parseInt(rateEl.value, 10),
-        pitch: parseInt(pitchEl.value, 10),
-        as_archive: archiveEl.checked
-      })
-    });
-    const data = await resp.json();
+    const mode = currentSplitMode();
+    const data = await requestGeneration(mode);
 
-    if (!resp.ok) {
-      throw new Error(data.error || 'Something went wrong.');
+    if (data.mode === 'parts') {
+      renderPartsResult(data);
+    } else {
+      renderSingleOrZipResult(data);
     }
-
-    downloadLink.href = data.download_url;
-    downloadLink.setAttribute('download', data.filename);
-    resultName.textContent = data.filename;
-    resultMeta.textContent = data.parts > 1
-      ? `${data.parts} parts synthesized`
-      : 'Ready to play';
-    result.classList.add('show');
-    statusText.textContent = 'Done.';
+    statusText.textContent = t.statusDone;
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.classList.add('show');
     statusText.textContent = '';
   } finally {
     genBtn.disabled = false;
+    readBtn.disabled = false;
+    wave.classList.remove('active');
+  }
+});
+
+readBtn.addEventListener('click', async () => {
+  const t = I18N[currentLang];
+  clearOutputs();
+
+  if (!textEl.value.trim()) {
+    errorBox.textContent = t.errNoText;
+    errorBox.classList.add('show');
+    return;
+  }
+
+  genBtn.disabled = true;
+  readBtn.disabled = true;
+  wave.classList.add('active');
+  statusText.textContent = t.statusReading;
+
+  try {
+    // Read Aloud always produces one continuous track, regardless of the
+    // split-into-parts option (that option only applies to downloads).
+    const data = await requestGeneration('single');
+    player.src = data.play_url;
+    player.style.display = 'block';
+    await player.play();
+    statusText.textContent = t.statusDone;
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.classList.add('show');
+    statusText.textContent = '';
+  } finally {
+    genBtn.disabled = false;
+    readBtn.disabled = false;
     wave.classList.remove('active');
   }
 });
