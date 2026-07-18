@@ -15,6 +15,7 @@ import asyncio
 import io
 import os
 import re
+import shutil
 import tempfile
 import uuid
 import zipfile
@@ -233,7 +234,7 @@ def generate():
             final_name = f"speech_{stamp}.mp3"
             final_path = os.path.join(OUTPUT_DIR, final_name)
             if len(part_paths) == 1:
-                os.replace(part_paths[0], final_path)
+                shutil.move(part_paths[0], final_path)
             else:
                 concat_mp3s(part_paths, final_path)
             return jsonify({
