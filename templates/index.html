@@ -646,8 +646,21 @@ langToggle.addEventListener('click', () => {
 });
 
 // Set the initial default voice (Emma) on first load.
-voiceEl.value = I18N.en.defaultVoice;
-applyLanguage('en');
+// Auto-detect the page language from the browser/system locale. Portuguese
+// (any variant - pt, pt-BR, pt-PT) starts the page in Portuguese; anything
+// else starts it in English. The toggle button still lets the user override
+// this manually at any time.
+function detectInitialLang() {
+  const langs = navigator.languages && navigator.languages.length
+    ? navigator.languages
+    : [navigator.language || navigator.userLanguage || 'en'];
+  const isPortuguese = langs.some((l) => l.toLowerCase().startsWith('pt'));
+  return isPortuguese ? 'pt' : 'en';
+}
+
+const initialLang = detectInitialLang();
+voiceEl.value = I18N[initialLang].defaultVoice;
+applyLanguage(initialLang);
 
 textEl.addEventListener('input', updateCharCount);
 
