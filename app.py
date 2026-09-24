@@ -26,8 +26,18 @@ from datetime import datetime
 import edge_tts
 from docx import Document
 from flask import Flask, jsonify, render_template, request, send_file
+from pypdf import PdfReader
 
 app = Flask(__name__)
+
+# Reject uploads/requests larger than this (20 MB). Keeps a huge PDF from
+# tying up the server or hitting the hosting platform's request timeout.
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
+
+
+@app.errorhandler(413)
+def too_large(_err):
+    return jsonify({"error": "That file is too large (limit is 20 MB)."}), 413
 
 # Max characters sent to the TTS service in a single request. Edge's service
 # can choke on extremely long single requests, so long text gets split into
@@ -164,6 +174,25 @@ def extract_text_from_docx(file_storage):
     return "\n\n".join(p for p in parts if p.strip())
 
 
+def extract_text_from_pdf(file_storage):
+    """Extract text from a text-based PDF. Scanned (image-only) PDFs have no
+    text layer and will come back empty; that needs OCR, which this app
+    doesn't do."""
+    reader = PdfReader(file_storage.stream)
+    if reader.is_encrypted:
+        if not reader.decrypt(""):
+            raise ValueError("This PDF is password-protected.")
+    pages = [(page.extract_text() or "") for page in reader.pages]
+    text = "\n\n".join(pages)
+    # PDFs hard-wrap lines at the page width, which would make the voice
+    # pause in the middle of sentences. Rejoin hyphenated words split across
+    # lines, then turn single line breaks into spaces (blank lines stay as
+    # paragraph breaks).
+    text = re.sub(r"-\n(?=\w)", "", text)
+    text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
+    return text
+
+
 @app.route("/")
 def index():
     return render_template("index.html", voices=CURATED_VOICES)
@@ -183,8 +212,10 @@ def extract_text():
             text = extract_text_from_txt(file_storage)
         elif ext == ".docx":
             text = extract_text_from_docx(file_storage)
+        elif ext == ".pdf":
+            text = extract_text_from_pdf(file_storage)
         else:
-            return jsonify({"error": "Only .txt and .docx files are supported."}), 400
+            return jsonify({"error": "Only .txt, .docx and .pdf files are supported."}), 400
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"Couldn't read that file: {exc}"}), 400
 
