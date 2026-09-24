@@ -401,8 +401,8 @@
   <div class="panel">
     <span class="panel-label">Manuscript</span>
     <div class="upload-row">
-      <label class="upload-btn" for="fileInput">Upload .txt or .docx</label>
-      <input type="file" id="fileInput" accept=".txt,.docx" hidden>
+      <label class="upload-btn" for="fileInput">Upload .txt, .docx or .pdf</label>
+      <input type="file" id="fileInput" accept=".txt,.docx,.pdf" hidden>
       <span id="fileStatus"></span>
     </div>
     <textarea id="text" placeholder="Paste or type the text you want read aloud, or upload a file above…"></textarea>
@@ -438,22 +438,21 @@
         </div>
       </div>
     </div>
-    <label class="archive-toggle">
-      <input type="checkbox" id="splitToggle">
-      <span id="splitToggleLabel">For long text, split into separate parts instead of one merged MP3</span>
-    </label>
-    <div class="split-options" id="splitOptions">
+    <div class="archive-toggle">
+      <span id="splitToggleLabel">For long text, choose how to receive the audio:</span>
+    </div>
+    <div class="split-options show" id="splitOptions">
       <label class="radio-row">
-        <input type="radio" name="splitMode" value="parts" checked>
-        <span id="splitOptSeparate">Download each part separately</span>
+        <input type="radio" name="splitMode" value="single" checked>
+        <span id="splitOptCombine">Combine parts into a single MP3</span>
       </label>
       <label class="radio-row">
         <input type="radio" name="splitMode" value="zip">
         <span id="splitOptZip">Download all parts together (.zip)</span>
       </label>
       <label class="radio-row">
-        <input type="radio" name="splitMode" value="single">
-        <span id="splitOptCombine">Combine parts into a single MP3</span>
+        <input type="radio" name="splitMode" value="parts">
+        <span id="splitOptSeparate">Download each part separately</span>
       </label>
     </div>
   </div>
@@ -496,13 +495,13 @@ const I18N = {
     htmlLang: 'en',
     langToggle: 'EN / PT-BR',
     panelManuscript: 'Manuscript',
-    uploadBtn: 'Upload .txt or .docx',
+    uploadBtn: 'Upload .txt, .docx or .pdf',
     textPlaceholder: 'Paste or type the text you want read aloud, or upload a file above…',
     panelDial: 'Dial settings',
     voiceLabel: 'Voice',
     speedLabel: 'Speed',
     pitchLabel: 'Pitch',
-    splitToggleLabel: 'For long text, split into separate parts instead of one merged MP3',
+    splitToggleLabel: 'For long text, choose how to receive the audio:',
     splitOptSeparate: 'Download each part separately',
     splitOptZip: 'Download all parts together (.zip)',
     splitOptCombine: 'Combine parts into a single MP3',
@@ -532,13 +531,13 @@ const I18N = {
     htmlLang: 'pt-BR',
     langToggle: 'PT-BR / EN',
     panelManuscript: 'Manuscrito',
-    uploadBtn: 'Enviar .txt ou .docx',
+    uploadBtn: 'Enviar .txt, .docx ou .pdf',
     textPlaceholder: 'Cole ou digite o texto que você quer ouvir, ou envie um arquivo acima…',
     panelDial: 'Configurações',
     voiceLabel: 'Voz',
     speedLabel: 'Velocidade',
     pitchLabel: 'Tom',
-    splitToggleLabel: 'Para textos longos, dividir em partes separadas em vez de um único MP3',
+    splitToggleLabel: 'Para textos longos, escolha como receber o áudio:',
     splitOptSeparate: 'Baixar cada parte separadamente',
     splitOptZip: 'Baixar todas as partes juntas (.zip)',
     splitOptCombine: 'Combinar as partes em um único MP3',
@@ -585,8 +584,6 @@ const resultName = document.getElementById('resultName');
 const resultMeta = document.getElementById('resultMeta');
 const downloadLink = document.getElementById('downloadLink');
 const errorBox = document.getElementById('errorBox');
-const splitToggle = document.getElementById('splitToggle');
-const splitOptions = document.getElementById('splitOptions');
 const partsList = document.getElementById('partsList');
 const player = document.getElementById('player');
 const langToggle = document.getElementById('langToggle');
@@ -701,10 +698,6 @@ pitchEl.addEventListener('input', () => {
   pitchOut.textContent = (v >= 0 ? '+' : '') + v + 'Hz';
 });
 
-splitToggle.addEventListener('change', () => {
-  splitOptions.classList.toggle('show', splitToggle.checked);
-});
-
 function clearOutputs() {
   errorBox.classList.remove('show', 'warning');
   result.classList.remove('show');
@@ -715,9 +708,8 @@ function clearOutputs() {
 }
 
 function currentSplitMode() {
-  if (!splitToggle.checked) return 'single';
   const chosen = document.querySelector('input[name="splitMode"]:checked');
-  return chosen ? chosen.value : 'parts';
+  return chosen ? chosen.value : 'single';
 }
 
 async function startGenerationJob(mode) {
