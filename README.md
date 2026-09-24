@@ -22,9 +22,11 @@ account, no API key, no billing.
   - download each part separately,
   - download all parts together as a `.zip`, or
   - combine the parts back into a single MP3.
-- **File upload** — load text straight from a `.txt` or `.docx` file
+- **File upload** — load text straight from a `.txt`, `.docx` or `.pdf` file
   instead of pasting it in. `.docx` paragraph and table text is extracted;
   images and formatting are ignored since only the words matter for speech.
+  PDFs must contain real text (scanned, image-only PDFs have nothing to
+  extract), and uploads are limited to 20 MB.
 - **Speed and pitch controls**.
 
 ## Setup
@@ -45,16 +47,15 @@ Then open **http://127.0.0.1:5000** in your browser.
 
 ## How to use it
 
-1. Paste or type your text into the box — or click **Upload .txt or .docx**
+1. Paste or type your text into the box — or click **Upload .txt, .docx or .pdf**
    to load text from a file.
 2. Pick a voice (or use the language toggle's default), and adjust
    speed/pitch if you want.
 3. Click **Read aloud** to hear it right away, or **Generate audio** to
    prepare a download.
 4. If generating for download and your text is long enough to be split into
-   parts, check the "split into separate parts" box to choose between
-   separate files, a `.zip`, or one combined MP3. Leave it unchecked for a
-   single merged MP3 by default.
+   parts, pick how you want to receive it: one combined MP3 (the default),
+   a `.zip`, or separate files.
 
 Uploaded files are read on the server (nothing leaves the machine running
 the app except the request to Microsoft's speech service once you generate
