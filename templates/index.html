@@ -512,6 +512,8 @@ const I18N = {
     statusDone: 'Done.',
     errNoText: 'Paste some text first.',
     errGeneric: 'Something went wrong.',
+    errAzureAuth: 'Azure Speech rejected the request. Check AZURE_SPEECH_KEY and AZURE_SPEECH_REGION on the server, and that the free monthly quota is not used up.',
+    footerAzureHtml: 'Powered by Azure AI Speech neural voices.',
     errBlocked: "Microsoft's speech service refused the connection (HTTP 403). This usually means it is blocking this server's IP address, which is common on cloud hosts. It normally works when the app runs on your own computer.",
     readyToPlay: 'Ready to play',
     partsSynthesized: (n) => `${n} parts synthesized`,
@@ -549,6 +551,8 @@ const I18N = {
     statusDone: 'Pronto.',
     errNoText: 'Cole algum texto primeiro.',
     errGeneric: 'Algo deu errado.',
+    errAzureAuth: 'O Azure Speech recusou a requisição. Verifique AZURE_SPEECH_KEY e AZURE_SPEECH_REGION no servidor e se a cota gratuita mensal não acabou.',
+    footerAzureHtml: 'Desenvolvido com as vozes neurais do Azure AI Speech.',
     errBlocked: 'O serviço de voz da Microsoft recusou a conexão (HTTP 403). Isso geralmente significa que o IP deste servidor está bloqueado, algo comum em hospedagens na nuvem. Normalmente funciona quando o app roda no seu próprio computador.',
     readyToPlay: 'Pronto para tocar',
     partsSynthesized: (n) => `${n} partes sintetizadas`,
@@ -593,6 +597,7 @@ const fileInput = document.getElementById('fileInput');
 const fileStatus = document.getElementById('fileStatus');
 const uploadLabel = document.querySelector('label[for="fileInput"]');
 
+const ENGINE = "{{ engine }}";
 const CHUNK_SIZE = 3000;
 
 function updateCharCount() {
@@ -620,7 +625,7 @@ function applyLanguage(lang) {
   genBtn.textContent = t.genBtn;
   readBtn.textContent = t.readBtn;
   downloadLink.textContent = t.downloadBtn;
-  document.getElementById('footerText').innerHTML = t.footerHtml;
+  document.getElementById('footerText').innerHTML = ENGINE === 'azure' ? t.footerAzureHtml : t.footerHtml;
 
   const speedPitchLabels = document.querySelectorAll('.field label');
   // speedPitchLabels[0] is "Voice" (already set above via selector), so grab by structure instead:
@@ -826,7 +831,8 @@ async function runGenerationFlow(mode, showLiveParts, onDone) {
 
     if (status.status === 'done') {
       if (status.error) {
-        throw new Error(status.error_code === 'blocked' ? t.errBlocked : status.error);
+        const known = { blocked: t.errBlocked, azure_auth: t.errAzureAuth };
+        throw new Error(known[status.error_code] || status.error);
       }
       showPartialFailureWarning(status.failed, status.total_chunks);
       onDone(status);
