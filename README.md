@@ -88,6 +88,27 @@ so it's usable from any device, not just localhost:
   `0.0.0.0`, which is what hosting platforms expect — it still defaults to
   `127.0.0.1:5000` when run locally with no `PORT` set.
 
+## Using Azure Speech (recommended for Render / cloud hosting)
+
+Microsoft blocks the free Edge "Read aloud" endpoint from many cloud server
+IPs (HTTP 403). Azure AI Speech is the official service and works from any
+host. The free tier (F0) includes 0.5 million neural characters per month.
+
+1. In the [Azure portal](https://portal.azure.com), create a **Speech**
+   resource (search "Speech" in "Create a resource"). Pick the **Free F0**
+   pricing tier and a region close to you (e.g. `brazilsouth`, `eastus`).
+2. Open the resource, go to **Keys and Endpoint**, and copy **KEY 1** and
+   the **Location/Region**.
+3. On Render: **Environment** -> add
+   - `AZURE_SPEECH_KEY` = your key
+   - `AZURE_SPEECH_REGION` = the region, e.g. `brazilsouth`
+4. Redeploy, then open `/api/diagnose`. It should show `"engine": "azure"`
+   and `"ok": true`.
+
+If both variables are set the app uses Azure; if not, it uses Edge TTS.
+The same voice names are used by both services. If a particular voice gives
+an error on Azure, pick another one from the dropdown.
+
 ## Troubleshooting: "403 Invalid response status"
 
 If generation fails with `403, message='Invalid response status'` and a
