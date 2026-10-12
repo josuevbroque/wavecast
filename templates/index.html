@@ -512,6 +512,7 @@ const I18N = {
     statusDone: 'Done.',
     errNoText: 'Paste some text first.',
     errGeneric: 'Something went wrong.',
+    errBlocked: "Microsoft's speech service refused the connection (HTTP 403). This usually means it is blocking this server's IP address, which is common on cloud hosts. It normally works when the app runs on your own computer.",
     readyToPlay: 'Ready to play',
     partsSynthesized: (n) => `${n} parts synthesized`,
     downloadBtn: 'Download',
@@ -548,6 +549,7 @@ const I18N = {
     statusDone: 'Pronto.',
     errNoText: 'Cole algum texto primeiro.',
     errGeneric: 'Algo deu errado.',
+    errBlocked: 'O serviço de voz da Microsoft recusou a conexão (HTTP 403). Isso geralmente significa que o IP deste servidor está bloqueado, algo comum em hospedagens na nuvem. Normalmente funciona quando o app roda no seu próprio computador.',
     readyToPlay: 'Pronto para tocar',
     partsSynthesized: (n) => `${n} partes sintetizadas`,
     downloadBtn: 'Baixar',
@@ -824,7 +826,7 @@ async function runGenerationFlow(mode, showLiveParts, onDone) {
 
     if (status.status === 'done') {
       if (status.error) {
-        throw new Error(status.error);
+        throw new Error(status.error_code === 'blocked' ? t.errBlocked : status.error);
       }
       showPartialFailureWarning(status.failed, status.total_chunks);
       onDone(status);
