@@ -1,6 +1,6 @@
 flask>=3.0
-edge-tts>=7.2.8
-aiohttp>=3.8
+piper-tts>=1.8,<2
+lameenc>=1.7
 python-docx>=1.1
 pypdf>=4.0
 gunicorn>=22.0
