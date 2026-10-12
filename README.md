@@ -1,135 +1,78 @@
-# wavecast — free AI text-to-speech reader
+# wavecast — free text-to-speech reader (Piper)
 
-A small web app that reads text aloud using Microsoft Edge's free neural
-voices (the same ones behind Edge's "Read aloud" feature). Paste text or
-upload a `.txt`/`.docx` file, and either listen to it immediately or
-download it as MP3 (as one file, as separate parts, or as a `.zip`).
+A small web app that reads text aloud. Paste text or upload a `.txt`,
+`.docx` or `.pdf`, then listen right away or download MP3s (one file,
+separate parts, or a `.zip`).
 
-It uses the open-source [`edge-tts`](https://github.com/rany2/edge-tts)
-library, which talks directly to the free service Microsoft Edge uses. No
-account, no API key, no billing.
+It uses [Piper](https://github.com/OHF-Voice/piper1-gpl), an open-source
+neural text-to-speech engine that runs **on the server's own CPU**. No
+account, no API key, no external service — so nothing can block it, rate
+limit it, or run out of quota — and it is small enough for Render's free plan.
 
 ## Features
 
-- **Bilingual interface** — a toggle switches the whole UI between English
-  and Portuguese (Brazil). English defaults to the Emma (US) voice;
-  Portuguese defaults to Francisca (Brazil). You can still pick any other
-  voice from the dropdown regardless of interface language.
-- **Read aloud** — click to synthesize and play the audio immediately in
-  the browser, no download needed.
-- **Generate audio** — synthesizes and prepares a downloadable file. For
-  long text that gets split into multiple parts, you can choose to:
-  - download each part separately,
-  - download all parts together as a `.zip`, or
-  - combine the parts back into a single MP3.
-- **File upload** — load text straight from a `.txt`, `.docx` or `.pdf` file
-  instead of pasting it in. `.docx` paragraph and table text is extracted;
-  images and formatting are ignored since only the words matter for speech.
-  PDFs must contain real text (scanned, image-only PDFs have nothing to
-  extract), and uploads are limited to 20 MB.
-- **Speed and pitch controls**.
+- **Bilingual interface** (English / Portuguese-Brazil toggle, auto-detected
+  from the browser).
+- **Read aloud** or **Generate audio** (downloadable MP3).
+- **Long text** is split into parts: download each part, all parts as a
+  `.zip`, or one combined MP3.
+- **File upload**: `.txt`, `.docx`, `.pdf` (text-based PDFs; scanned PDFs have
+  no text to extract), up to 20 MB.
+- **Speed control.** (Piper has no pitch control, so there is no pitch slider.)
 
-## Setup
+## Voices
 
-You need **Python 3.9+** installed. Then, from this folder:
+`download_voices.py` downloads the voices at build time (about 60 MB each):
+
+| Voice | Language |
+|---|---|
+| Faber, Cadu | Portuguese (Brazil) |
+| Lessac, Amy | English (US) |
+| Alba | English (UK) |
+
+The dropdown only lists voices that are actually installed. To change what is
+installed, set `PIPER_VOICES` (comma separated) for the build, e.g.
+`PIPER_VOICES=pt_BR-faber-medium,pt_BR-jeff-medium,es_ES-davefx-medium`.
+Voices the app knows about are listed in `voices_catalog.py`; Piper has many
+more at https://huggingface.co/rhasspy/piper-voices — add the name to
+`CATALOG` to show it in the dropdown. Each installed voice uses disk space
+and download time at build; only one voice is loaded in memory at a time.
+
+## Run locally
+
+Python 3.9+:
 
 ```bash
 pip install -r requirements.txt
-```
-
-## Run it locally
-
-```bash
+python download_voices.py
 python app.py
 ```
 
-Then open **http://127.0.0.1:5000** in your browser.
+Open http://127.0.0.1:5000
 
-## How to use it
+## Deploy on Render (free)
 
-1. Paste or type your text into the box — or click **Upload .txt, .docx or .pdf**
-   to load text from a file.
-2. Pick a voice (or use the language toggle's default), and adjust
-   speed/pitch if you want.
-3. Click **Read aloud** to hear it right away, or **Generate audio** to
-   prepare a download.
-4. If generating for download and your text is long enough to be split into
-   parts, pick how you want to receive it: one combined MP3 (the default),
-   a `.zip`, or separate files.
+In your Render web service settings:
 
-Uploaded files are read on the server (nothing leaves the machine running
-the app except the request to Microsoft's speech service once you generate
-audio).
+- **Build Command:** `pip install -r requirements.txt && python download_voices.py`
+- **Start Command:**
+  `gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120`
+  (Render uses the Start Command field; keep it at **one worker**, because
+  jobs are tracked in memory.)
+- You no longer need any `AZURE_*` or `EDGE_TTS_PROXY` environment variables.
 
-Long text (over ~3,000 characters) is automatically split into chunks so
-the speech service doesn't choke on it: this happens regardless of which
-download option you choose.
+Voices are downloaded during the build, so they are part of the deployment and
+are not fetched again when the free service wakes up from sleep.
 
-## Adding more voices
+## Troubleshooting
 
-The app ships with ~23 common voices across several languages. Edge TTS
-actually supports 300+ voices. To see the full list, run:
-
-```bash
-edge-tts --list-voices
-```
-
-Then add any `ShortName` you want to the `CURATED_VOICES` list near the top
-of `app.py`.
-
-## Deploying it publicly (e.g. on Render)
-
-This app is set up to run on hosting platforms like [Render](https://render.com)
-so it's usable from any device, not just localhost:
-
-- **`Procfile`** tells the platform to run it with `gunicorn` (a
-  production-grade server) instead of Flask's built-in dev server.
-- **`app.py`** reads the `PORT` environment variable and binds to
-  `0.0.0.0`, which is what hosting platforms expect — it still defaults to
-  `127.0.0.1:5000` when run locally with no `PORT` set.
-
-## Using Azure Speech (recommended for Render / cloud hosting)
-
-Microsoft blocks the free Edge "Read aloud" endpoint from many cloud server
-IPs (HTTP 403). Azure AI Speech is the official service and works from any
-host. The free tier (F0) includes 0.5 million neural characters per month.
-
-1. In the [Azure portal](https://portal.azure.com), create a **Speech**
-   resource (search "Speech" in "Create a resource"). Pick the **Free F0**
-   pricing tier and a region close to you (e.g. `brazilsouth`, `eastus`).
-2. Open the resource, go to **Keys and Endpoint**, and copy **KEY 1** and
-   the **Location/Region**.
-3. On Render: **Environment** -> add
-   - `AZURE_SPEECH_KEY` = your key
-   - `AZURE_SPEECH_REGION` = the region, e.g. `brazilsouth`
-4. Redeploy, then open `/api/diagnose`. It should show `"engine": "azure"`
-   and `"ok": true`.
-
-If both variables are set the app uses Azure; if not, it uses Edge TTS.
-The same voice names are used by both services. If a particular voice gives
-an error on Azure, pick another one from the dropdown.
-
-## Troubleshooting: "403 Invalid response status"
-
-If generation fails with `403, message='Invalid response status'` and a
-`wss://speech.platform.bing.com/...` URL, Microsoft's speech service is
-rejecting the connection. The app now stops right away (instead of trying
-every part) and shows a clear message.
-
-1. Open **`/api/diagnose`** on the running app. It tests the connection and
-   reports the installed `edge-tts` version.
-2. Make sure `edge-tts` is current: `pip install -U edge-tts` (on Render use
-   "Clear build cache & deploy").
-3. Check your system clock is correct (the auth token is time-based).
-4. If it works on your own computer but not on Render, the host's IP is being
-   blocked. Either run the app locally, host it somewhere else, or set the
-   `EDGE_TTS_PROXY` environment variable (e.g. `http://user:pass@host:port`)
-   to send speech requests through a proxy.
+Open **`/api/diagnose`** on the running site. It shows the installed voices and
+runs a tiny test synthesis. If it says no voices are installed, the build
+command did not run `download_voices.py`. Check the build log for lines
+starting with `[voices]`.
 
 ## Notes
 
-- Generated MP3s are saved in the `output/` folder as well as served for
-  download/playback — feel free to clear that folder out occasionally.
-- Locally, this uses Flask's built-in development server by default, which
-  is fine for personal use but isn't meant to be exposed to the internet
-  directly — use the `gunicorn`/Render setup above for that instead.
+- Generated MP3s are kept in `output/` for an hour, then deleted automatically.
+- Piper voices sound more synthetic than big cloud voices, but they are free,
+  fast and private.
