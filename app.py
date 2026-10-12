@@ -13,6 +13,7 @@ Then open http://127.0.0.1:5000 in your browser.
 
 import asyncio
 import io
+from importlib import metadata as importlib_metadata
 import os
 import re
 import shutil
@@ -23,6 +24,7 @@ import uuid
 import zipfile
 from datetime import datetime
 
+import aiohttp
 import edge_tts
 from docx import Document
 from flask import Flask, jsonify, render_template, request, send_file
@@ -43,6 +45,19 @@ def too_large(_err):
 # can choke on extremely long single requests, so long text gets split into
 # chunks (on paragraph/sentence boundaries) and stitched back together.
 CHUNK_SIZE = 3000
+
+# Microsoft's speech service sometimes rejects requests coming from cloud /
+# datacenter IP ranges (Render, AWS, etc.) with HTTP 403. If that happens, you
+# can route the speech traffic through a proxy by setting this environment
+# variable, e.g.  EDGE_TTS_PROXY=http://user:pass@host:port
+EDGE_TTS_PROXY = os.environ.get("EDGE_TTS_PROXY") or None
+
+BLOCKED_MESSAGE = (
+    "Microsoft's speech service rejected the connection (HTTP 403). This "
+    "usually means it is blocking this server's IP address, which is common "
+    "on cloud hosts like Render. It works from most home connections. See "
+    "the README for options (run locally, or set EDGE_TTS_PROXY)."
+)
 
 # A curated, friendly subset of voices instead of the full 300+ list.
 # (Full list can be fetched from edge_tts.list_voices() if you want more.)
@@ -120,24 +135,35 @@ def split_text(text, max_len=CHUNK_SIZE):
 async def synthesize_chunk(text, voice, rate, pitch, out_path):
     rate_str = f"{'+' if rate >= 0 else ''}{rate}%"
     pitch_str = f"{'+' if pitch >= 0 else ''}{pitch}Hz"
-    communicate = edge_tts.Communicate(text, voice, rate=rate_str, pitch=pitch_str)
+    communicate = edge_tts.Communicate(
+        text, voice, rate=rate_str, pitch=pitch_str, proxy=EDGE_TTS_PROXY
+    )
     await communicate.save(out_path)
 
 
-async def synthesize_chunk_with_retry(text, voice, rate, pitch, out_path, attempts=2):
-    """Try synthesizing a single chunk, retrying once on transient failures
-    (e.g. a dropped connection to the speech service) before giving up on
-    just this chunk."""
+def is_blocked_error(exc):
+    """True if the speech service refused the handshake with a 403.
+    edge-tts already retries a 403 once itself (to correct for clock skew),
+    so if one still reaches us it is not going to fix itself on retry."""
+    return isinstance(exc, aiohttp.ClientResponseError) and exc.status == 403
+
+
+async def synthesize_chunk_with_retry(text, voice, rate, pitch, out_path, attempts=3):
+    """Try synthesizing a single chunk, retrying with a growing delay on
+    transient failures (e.g. a dropped connection). A 403 is not retried.
+    Returns (ok, error_message, blocked)."""
     last_error = None
     for attempt in range(1, attempts + 1):
         try:
             await synthesize_chunk(text, voice, rate, pitch, out_path)
-            return True, None
+            return True, None, False
         except Exception as exc:  # noqa: BLE001
             last_error = exc
+            if is_blocked_error(exc):
+                return False, str(exc), True
             if attempt < attempts:
-                await asyncio.sleep(1.5)
-    return False, str(last_error)
+                await asyncio.sleep(1.5 * attempt)
+    return False, str(last_error), False
 
 
 def concat_mp3s(paths, out_path):
@@ -250,11 +276,15 @@ def run_generation_job(job_id, chunks, voice, rate, pitch, mode):
     work_dir = tempfile.mkdtemp(prefix=f"tts_{job_id}_")
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     ordered_paths = [None] * len(chunks)
+    blocked = False
 
     async def run():
+        nonlocal blocked
         for i, chunk in enumerate(chunks):
             out_path = os.path.join(work_dir, f"part_{i:03d}.mp3")
-            ok, error = await synthesize_chunk_with_retry(chunk, voice, rate, pitch, out_path)
+            ok, error, was_blocked = await synthesize_chunk_with_retry(
+                chunk, voice, rate, pitch, out_path
+            )
             if ok:
                 part_name = f"speech_{job_id}_part{i + 1:02d}.mp3"
                 part_final_path = os.path.join(OUTPUT_DIR, part_name)
@@ -270,6 +300,11 @@ def run_generation_job(job_id, chunks, voice, rate, pitch, mode):
             else:
                 with JOBS_LOCK:
                     JOBS[job_id]["failed"].append({"index": i + 1, "error": error})
+                # Blocked before a single part worked: every remaining part
+                # would fail the same way, so stop instead of trying all of them.
+                if was_blocked and not any(ordered_paths):
+                    blocked = True
+                    return
 
     try:
         asyncio.run(run())
@@ -285,9 +320,13 @@ def run_generation_job(job_id, chunks, voice, rate, pitch, mode):
     with JOBS_LOCK:
         if not succeeded_paths:
             first_error = JOBS[job_id]["failed"][0]["error"] if JOBS[job_id]["failed"] else "Unknown error."
-            JOBS[job_id]["error"] = (
-                f"Speech generation failed for all {len(chunks)} part(s). First error: {first_error}"
-            )
+            if blocked:
+                JOBS[job_id]["error"] = BLOCKED_MESSAGE
+                JOBS[job_id]["error_code"] = "blocked"
+            else:
+                JOBS[job_id]["error"] = (
+                    f"Speech generation failed for all {len(chunks)} part(s). First error: {first_error}"
+                )
             JOBS[job_id]["status"] = "done"
         else:
             final = None
@@ -367,6 +406,7 @@ def generate_start():
             "failed": [],
             "final": None,
             "error": None,
+            "error_code": None,
             "created": time.time(),
         }
 
@@ -394,7 +434,35 @@ def generate_status(job_id):
             "failed": list(job["failed"]),
             "final": job["final"],
             "error": job["error"],
+            "error_code": job["error_code"],
         })
+
+
+@app.route("/api/diagnose")
+def diagnose():
+    """Visit /api/diagnose to test the connection to Microsoft's speech
+    service from wherever the app is running (handy on Render)."""
+    try:
+        version = importlib_metadata.version("edge-tts")
+    except Exception:  # noqa: BLE001
+        version = "unknown"
+
+    async def probe():
+        communicate = edge_tts.Communicate("hello", "en-US-EmmaNeural", proxy=EDGE_TTS_PROXY)
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                return
+
+    info = {"edge_tts_version": version, "proxy_configured": bool(EDGE_TTS_PROXY)}
+    try:
+        asyncio.run(probe())
+        info.update(ok=True, message="Connected to the speech service.")
+        return jsonify(info)
+    except Exception as exc:  # noqa: BLE001
+        info.update(ok=False, error=str(exc))
+        if is_blocked_error(exc):
+            info["message"] = BLOCKED_MESSAGE
+        return jsonify(info), 502
 
 
 @app.route("/download/<path:filename>")
