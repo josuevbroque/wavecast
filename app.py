@@ -5,6 +5,12 @@ Uses Microsoft Edge's built-in "Read Aloud" neural voices via the open-source
 edge-tts library (https://github.com/rany2/edge-tts). No API key, no signup,
 no billing - it talks to the same free service the Edge browser uses.
 
+Two speech engines are supported:
+  * Azure AI Speech (official, works from cloud hosts like Render). Used
+    automatically when AZURE_SPEECH_KEY and AZURE_SPEECH_REGION are set.
+  * Edge "Read Aloud" via edge-tts (free, unofficial). Used otherwise, but
+    Microsoft often blocks it from cloud server IPs (HTTP 403).
+
 Run locally:
     pip install -r requirements.txt
     python app.py
@@ -14,6 +20,7 @@ Then open http://127.0.0.1:5000 in your browser.
 import asyncio
 import io
 from importlib import metadata as importlib_metadata
+from xml.sax.saxutils import escape as xml_escape
 import os
 import re
 import shutil
@@ -51,6 +58,28 @@ CHUNK_SIZE = 3000
 # can route the speech traffic through a proxy by setting this environment
 # variable, e.g.  EDGE_TTS_PROXY=http://user:pass@host:port
 EDGE_TTS_PROXY = os.environ.get("EDGE_TTS_PROXY") or None
+
+APP_VERSION = "2.0-azure"
+
+# Azure AI Speech. Create a "Speech" resource in the Azure portal (the free
+# F0 tier is enough), then set these two environment variables.
+AZURE_KEY = (os.environ.get("AZURE_SPEECH_KEY") or "").strip()
+AZURE_REGION = (os.environ.get("AZURE_SPEECH_REGION") or "").strip().lower()
+USE_AZURE = bool(AZURE_KEY and AZURE_REGION)
+ENGINE = "azure" if USE_AZURE else "edge"
+
+AZURE_AUTH_MESSAGE = (
+    "Azure Speech rejected the request (HTTP {status}). Check that "
+    "AZURE_SPEECH_KEY is correct and that AZURE_SPEECH_REGION matches the "
+    "region of your Speech resource (for example 'brazilsouth' or 'eastus'), "
+    "and that the free monthly quota has not run out."
+)
+
+
+class AzureError(Exception):
+    def __init__(self, status, detail=""):
+        super().__init__(f"Azure Speech error {status}: {detail}".strip())
+        self.status = status
 
 BLOCKED_MESSAGE = (
     "Microsoft's speech service rejected the connection (HTTP 403). This "
@@ -132,9 +161,40 @@ def split_text(text, max_len=CHUNK_SIZE):
     return chunks
 
 
+async def synthesize_chunk_azure(text, voice, rate_str, pitch_str, out_path):
+    """Synthesize one chunk with the Azure AI Speech REST API."""
+    lang = "-".join(voice.split("-")[:2])  # "pt-BR-FranciscaNeural" -> "pt-BR"
+    ssml = (
+        f"<speak version='1.0' xml:lang='{lang}' "
+        f"xmlns='http://www.w3.org/2001/10/synthesis'>"
+        f"<voice name='{voice}'>"
+        f"<prosody rate='{rate_str}' pitch='{pitch_str}'>{xml_escape(text)}</prosody>"
+        f"</voice></speak>"
+    )
+    url = f"https://{AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/v1"
+    headers = {
+        "Ocp-Apim-Subscription-Key": AZURE_KEY,
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
+        "User-Agent": "wavecast",
+    }
+    timeout = aiohttp.ClientTimeout(total=120)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(url, data=ssml.encode("utf-8"), headers=headers) as resp:
+            if resp.status != 200:
+                detail = (await resp.text())[:200]
+                raise AzureError(resp.status, detail)
+            audio = await resp.read()
+    with open(out_path, "wb") as f:
+        f.write(audio)
+
+
 async def synthesize_chunk(text, voice, rate, pitch, out_path):
     rate_str = f"{'+' if rate >= 0 else ''}{rate}%"
     pitch_str = f"{'+' if pitch >= 0 else ''}{pitch}Hz"
+    if USE_AZURE:
+        await synthesize_chunk_azure(text, voice, rate_str, pitch_str, out_path)
+        return
     communicate = edge_tts.Communicate(
         text, voice, rate=rate_str, pitch=pitch_str, proxy=EDGE_TTS_PROXY
     )
@@ -150,20 +210,24 @@ def is_blocked_error(exc):
 
 async def synthesize_chunk_with_retry(text, voice, rate, pitch, out_path, attempts=3):
     """Try synthesizing a single chunk, retrying with a growing delay on
-    transient failures (e.g. a dropped connection). A 403 is not retried.
-    Returns (ok, error_message, blocked)."""
+    transient failures (dropped connection, Azure 429 "too many requests").
+    Returns (ok, error_message, fatal_code). fatal_code is "blocked" (Edge
+    403) or "azure_auth" (bad key / region / quota); neither is retried
+    because retrying cannot fix them."""
     last_error = None
     for attempt in range(1, attempts + 1):
         try:
             await synthesize_chunk(text, voice, rate, pitch, out_path)
-            return True, None, False
+            return True, None, None
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             if is_blocked_error(exc):
-                return False, str(exc), True
+                return False, str(exc), "blocked"
+            if isinstance(exc, AzureError) and exc.status in (401, 403):
+                return False, str(exc), "azure_auth"
             if attempt < attempts:
                 await asyncio.sleep(1.5 * attempt)
-    return False, str(last_error), False
+    return False, str(last_error), None
 
 
 def concat_mp3s(paths, out_path):
@@ -221,7 +285,7 @@ def extract_text_from_pdf(file_storage):
 
 @app.route("/")
 def index():
-    return render_template("index.html", voices=CURATED_VOICES)
+    return render_template("index.html", voices=CURATED_VOICES, engine=ENGINE)
 
 
 @app.route("/api/extract-text", methods=["POST"])
@@ -276,13 +340,13 @@ def run_generation_job(job_id, chunks, voice, rate, pitch, mode):
     work_dir = tempfile.mkdtemp(prefix=f"tts_{job_id}_")
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     ordered_paths = [None] * len(chunks)
-    blocked = False
+    fatal_code = None
 
     async def run():
-        nonlocal blocked
+        nonlocal fatal_code
         for i, chunk in enumerate(chunks):
             out_path = os.path.join(work_dir, f"part_{i:03d}.mp3")
-            ok, error, was_blocked = await synthesize_chunk_with_retry(
+            ok, error, fatal = await synthesize_chunk_with_retry(
                 chunk, voice, rate, pitch, out_path
             )
             if ok:
@@ -302,8 +366,8 @@ def run_generation_job(job_id, chunks, voice, rate, pitch, mode):
                     JOBS[job_id]["failed"].append({"index": i + 1, "error": error})
                 # Blocked before a single part worked: every remaining part
                 # would fail the same way, so stop instead of trying all of them.
-                if was_blocked and not any(ordered_paths):
-                    blocked = True
+                if fatal and not any(ordered_paths):
+                    fatal_code = fatal
                     return
 
     try:
@@ -320,9 +384,12 @@ def run_generation_job(job_id, chunks, voice, rate, pitch, mode):
     with JOBS_LOCK:
         if not succeeded_paths:
             first_error = JOBS[job_id]["failed"][0]["error"] if JOBS[job_id]["failed"] else "Unknown error."
-            if blocked:
+            if fatal_code == "blocked":
                 JOBS[job_id]["error"] = BLOCKED_MESSAGE
                 JOBS[job_id]["error_code"] = "blocked"
+            elif fatal_code == "azure_auth":
+                JOBS[job_id]["error"] = AZURE_AUTH_MESSAGE.format(status="401/403")
+                JOBS[job_id]["error_code"] = "azure_auth"
             else:
                 JOBS[job_id]["error"] = (
                     f"Speech generation failed for all {len(chunks)} part(s). First error: {first_error}"
@@ -448,20 +515,31 @@ def diagnose():
         version = "unknown"
 
     async def probe():
-        communicate = edge_tts.Communicate("hello", "en-US-EmmaNeural", proxy=EDGE_TTS_PROXY)
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                return
+        tmp = os.path.join(tempfile.gettempdir(), f"probe_{uuid.uuid4().hex[:8]}.mp3")
+        try:
+            await synthesize_chunk("hello", "en-US-EmmaNeural", 0, 0, tmp)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
 
-    info = {"edge_tts_version": version, "proxy_configured": bool(EDGE_TTS_PROXY)}
+    info = {
+        "app_version": APP_VERSION,
+        "engine": ENGINE,
+        "azure_region": AZURE_REGION or None,
+        "azure_key_set": bool(AZURE_KEY),
+        "edge_tts_version": version,
+        "proxy_configured": bool(EDGE_TTS_PROXY),
+    }
     try:
         asyncio.run(probe())
-        info.update(ok=True, message="Connected to the speech service.")
+        info.update(ok=True, message=f"Connected: the {ENGINE} speech engine works.")
         return jsonify(info)
     except Exception as exc:  # noqa: BLE001
         info.update(ok=False, error=str(exc))
         if is_blocked_error(exc):
             info["message"] = BLOCKED_MESSAGE
+        elif isinstance(exc, AzureError) and exc.status in (401, 403):
+            info["message"] = AZURE_AUTH_MESSAGE.format(status=exc.status)
         return jsonify(info), 502
 
 
