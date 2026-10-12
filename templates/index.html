@@ -430,13 +430,6 @@
           <output id="rateOut">0%</output>
         </div>
       </div>
-      <div class="field">
-        <label>Pitch</label>
-        <div class="slider-row">
-          <input type="range" id="pitch" min="-50" max="50" value="0" step="5">
-          <output id="pitchOut">0Hz</output>
-        </div>
-      </div>
     </div>
     <div class="archive-toggle">
       <span id="splitToggleLabel">For long text, choose how to receive the audio:</span>
@@ -484,8 +477,7 @@
   <div class="error-box" id="errorBox"></div>
 
   <footer>
-    <span id="footerText">Powered by the open-source <code>edge-tts</code> project, which uses Microsoft's
-    free "Read aloud" text-to-speech service.</span>
+    <span id="footerText">Powered by <code>Piper</code>, an open-source neural text-to-speech engine.</span>
   </footer>
 </div>
 
@@ -500,7 +492,6 @@ const I18N = {
     panelDial: 'Dial settings',
     voiceLabel: 'Voice',
     speedLabel: 'Speed',
-    pitchLabel: 'Pitch',
     splitToggleLabel: 'For long text, choose how to receive the audio:',
     splitOptSeparate: 'Download each part separately',
     splitOptZip: 'Download all parts together (.zip)',
@@ -512,23 +503,22 @@ const I18N = {
     statusDone: 'Done.',
     errNoText: 'Paste some text first.',
     errGeneric: 'Something went wrong.',
-    errAzureAuth: 'Azure Speech rejected the request. Check AZURE_SPEECH_KEY and AZURE_SPEECH_REGION on the server, and that the free monthly quota is not used up.',
-    footerAzureHtml: 'Powered by Azure AI Speech neural voices.',
-    errBlocked: "Microsoft's speech service refused the connection (HTTP 403). This usually means it is blocking this server's IP address, which is common on cloud hosts. It normally works when the app runs on your own computer.",
+    errNoVoices: 'No voices are installed on this server yet. Run download_voices.py (on Render, add it to the Build Command).',
     readyToPlay: 'Ready to play',
     partsSynthesized: (n) => `${n} parts synthesized`,
     downloadBtn: 'Download',
     playBtn: 'Play',
     partLabel: (i) => `Part ${i}`,
-    footerHtml: 'Powered by the open-source <code>edge-tts</code> project, which uses Microsoft\'s free "Read aloud" text-to-speech service.',
-    defaultVoice: 'en-US-EmmaNeural',
+    footerHtml: 'Powered by <code>Piper</code>, an open-source neural text-to-speech engine.',
+    defaultVoice: 'en_US-lessac-medium',
+    voicePrefix: 'en_',
     charCount: (n) => n.toLocaleString() + ' character' + (n === 1 ? '' : 's'),
     chunkInfo: (n) => `~${n} audio parts`,
     reading: (name) => `Reading ${name}…`,
     loaded: (name) => `Loaded ${name}`,
     couldNotRead: 'Could not read that file.',
     partialFailure: (failedCount, total, numbers) =>
-      `Heads up: ${failedCount} of ${total} part(s) failed to synthesize (part${failedCount === 1 ? '' : 's'} ${numbers}) — likely a temporary hiccup reaching the speech service. Everything else below succeeded. Generating again will retry the whole text if you want another attempt at those parts.`,
+      `Heads up: ${failedCount} of ${total} part(s) failed to synthesize (part${failedCount === 1 ? '' : 's'} ${numbers}) . Everything else below succeeded. Generating again will retry the whole text if you want another attempt at those parts.`,
   },
   pt: {
     htmlLang: 'pt-BR',
@@ -539,7 +529,6 @@ const I18N = {
     panelDial: 'Configurações',
     voiceLabel: 'Voz',
     speedLabel: 'Velocidade',
-    pitchLabel: 'Tom',
     splitToggleLabel: 'Para textos longos, escolha como receber o áudio:',
     splitOptSeparate: 'Baixar cada parte separadamente',
     splitOptZip: 'Baixar todas as partes juntas (.zip)',
@@ -551,23 +540,22 @@ const I18N = {
     statusDone: 'Pronto.',
     errNoText: 'Cole algum texto primeiro.',
     errGeneric: 'Algo deu errado.',
-    errAzureAuth: 'O Azure Speech recusou a requisição. Verifique AZURE_SPEECH_KEY e AZURE_SPEECH_REGION no servidor e se a cota gratuita mensal não acabou.',
-    footerAzureHtml: 'Desenvolvido com as vozes neurais do Azure AI Speech.',
-    errBlocked: 'O serviço de voz da Microsoft recusou a conexão (HTTP 403). Isso geralmente significa que o IP deste servidor está bloqueado, algo comum em hospedagens na nuvem. Normalmente funciona quando o app roda no seu próprio computador.',
+    errNoVoices: 'Nenhuma voz está instalada neste servidor ainda. Execute download_voices.py (no Render, adicione ao Build Command).',
     readyToPlay: 'Pronto para tocar',
     partsSynthesized: (n) => `${n} partes sintetizadas`,
     downloadBtn: 'Baixar',
     playBtn: 'Tocar',
     partLabel: (i) => `Parte ${i}`,
-    footerHtml: 'Desenvolvido com o projeto open-source <code>edge-tts</code>, que usa o serviço gratuito "Ler em voz alta" da Microsoft.',
-    defaultVoice: 'pt-BR-FranciscaNeural',
+    footerHtml: 'Desenvolvido com o <code>Piper</code>, um motor de voz neural open-source.',
+    defaultVoice: 'pt_BR-faber-medium',
+    voicePrefix: 'pt_',
     charCount: (n) => n.toLocaleString() + (n === 1 ? ' caractere' : ' caracteres'),
     chunkInfo: (n) => `~${n} partes de áudio`,
     reading: (name) => `Lendo ${name}…`,
     loaded: (name) => `Carregado: ${name}`,
     couldNotRead: 'Não foi possível ler esse arquivo.',
     partialFailure: (failedCount, total, numbers) =>
-      `Atenção: ${failedCount} de ${total} parte(s) falharam ao sintetizar (parte${failedCount === 1 ? '' : 's'} ${numbers}) — provavelmente uma instabilidade temporária no serviço de voz. O restante abaixo funcionou normalmente. Gerar novamente vai refazer o texto todo, se quiser tentar de novo essas partes.`,
+      `Atenção: ${failedCount} de ${total} parte(s) falharam ao sintetizar (parte${failedCount === 1 ? '' : 's'} ${numbers}) . O restante abaixo funcionou normalmente. Gerar novamente vai refazer o texto todo, se quiser tentar de novo essas partes.`,
   }
 };
 
@@ -578,9 +566,7 @@ const charcountEl = document.getElementById('charcount');
 const chunkinfoEl = document.getElementById('chunkinfo');
 const voiceEl = document.getElementById('voice');
 const rateEl = document.getElementById('rate');
-const pitchEl = document.getElementById('pitch');
 const rateOut = document.getElementById('rateOut');
-const pitchOut = document.getElementById('pitchOut');
 const genBtn = document.getElementById('genBtn');
 const readBtn = document.getElementById('readBtn');
 const wave = document.getElementById('wave');
@@ -597,7 +583,6 @@ const fileInput = document.getElementById('fileInput');
 const fileStatus = document.getElementById('fileStatus');
 const uploadLabel = document.querySelector('label[for="fileInput"]');
 
-const ENGINE = "{{ engine }}";
 const CHUNK_SIZE = 3000;
 
 function updateCharCount() {
@@ -606,6 +591,16 @@ function updateCharCount() {
   charcountEl.textContent = t.charCount(len);
   const chunks = Math.max(1, Math.ceil(len / CHUNK_SIZE));
   chunkinfoEl.textContent = chunks > 1 ? t.chunkInfo(chunks) : '';
+}
+
+let userPickedVoice = false;
+
+// Prefer the language's default voice; fall back to any installed voice for
+// that language, then to the first voice in the list.
+function pickDefaultVoice(t) {
+  const options = Array.from(voiceEl.options).map((o) => o.value);
+  if (options.includes(t.defaultVoice)) return t.defaultVoice;
+  return options.find((v) => v.startsWith(t.voicePrefix)) || options[0] || '';
 }
 
 function applyLanguage(lang) {
@@ -625,21 +620,15 @@ function applyLanguage(lang) {
   genBtn.textContent = t.genBtn;
   readBtn.textContent = t.readBtn;
   downloadLink.textContent = t.downloadBtn;
-  document.getElementById('footerText').innerHTML = ENGINE === 'azure' ? t.footerAzureHtml : t.footerHtml;
+  document.getElementById('footerText').innerHTML = t.footerHtml;
 
-  const speedPitchLabels = document.querySelectorAll('.field label');
-  // speedPitchLabels[0] is "Voice" (already set above via selector), so grab by structure instead:
   const allFieldLabels = document.querySelectorAll('.controls-grid .field label');
   allFieldLabels[0].textContent = t.voiceLabel;
   allFieldLabels[1].textContent = t.speedLabel;
-  allFieldLabels[2].textContent = t.pitchLabel;
 
-  // Set this language's default voice, if the current selection belongs to
-  // the *other* language's default (i.e. the user hasn't deliberately picked
-  // something else).
-  const otherDefault = lang === 'en' ? I18N.pt.defaultVoice : I18N.en.defaultVoice;
-  if (voiceEl.value === otherDefault || !voiceEl.value) {
-    voiceEl.value = t.defaultVoice;
+  // Switch to this language's default voice unless the user picked one.
+  if (!userPickedVoice) {
+    voiceEl.value = pickDefaultVoice(t);
   }
 
   updateCharCount();
@@ -662,8 +651,9 @@ function detectInitialLang() {
   return isPortuguese ? 'pt' : 'en';
 }
 
+voiceEl.addEventListener('change', () => { userPickedVoice = true; });
+
 const initialLang = detectInitialLang();
-voiceEl.value = I18N[initialLang].defaultVoice;
 applyLanguage(initialLang);
 
 textEl.addEventListener('input', updateCharCount);
@@ -700,10 +690,6 @@ rateEl.addEventListener('input', () => {
   const v = parseInt(rateEl.value, 10);
   rateOut.textContent = (v >= 0 ? '+' : '') + v + '%';
 });
-pitchEl.addEventListener('input', () => {
-  const v = parseInt(pitchEl.value, 10);
-  pitchOut.textContent = (v >= 0 ? '+' : '') + v + 'Hz';
-});
 
 function clearOutputs() {
   errorBox.classList.remove('show', 'warning');
@@ -727,7 +713,6 @@ async function startGenerationJob(mode) {
       text: textEl.value.trim(),
       voice: voiceEl.value,
       rate: parseInt(rateEl.value, 10),
-      pitch: parseInt(pitchEl.value, 10),
       mode
     })
   });
@@ -831,7 +816,7 @@ async function runGenerationFlow(mode, showLiveParts, onDone) {
 
     if (status.status === 'done') {
       if (status.error) {
-        const known = { blocked: t.errBlocked, azure_auth: t.errAzureAuth };
+        const known = { no_voices: t.errNoVoices };
         throw new Error(known[status.error_code] || status.error);
       }
       showPartialFailureWarning(status.failed, status.total_chunks);
