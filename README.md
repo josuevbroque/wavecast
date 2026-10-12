@@ -88,6 +88,23 @@ so it's usable from any device, not just localhost:
   `0.0.0.0`, which is what hosting platforms expect — it still defaults to
   `127.0.0.1:5000` when run locally with no `PORT` set.
 
+## Troubleshooting: "403 Invalid response status"
+
+If generation fails with `403, message='Invalid response status'` and a
+`wss://speech.platform.bing.com/...` URL, Microsoft's speech service is
+rejecting the connection. The app now stops right away (instead of trying
+every part) and shows a clear message.
+
+1. Open **`/api/diagnose`** on the running app. It tests the connection and
+   reports the installed `edge-tts` version.
+2. Make sure `edge-tts` is current: `pip install -U edge-tts` (on Render use
+   "Clear build cache & deploy").
+3. Check your system clock is correct (the auth token is time-based).
+4. If it works on your own computer but not on Render, the host's IP is being
+   blocked. Either run the app locally, host it somewhere else, or set the
+   `EDGE_TTS_PROXY` environment variable (e.g. `http://user:pass@host:port`)
+   to send speech requests through a proxy.
+
 ## Notes
 
 - Generated MP3s are saved in the `output/` folder as well as served for
